@@ -43,15 +43,19 @@ class AuthController extends ChangeNotifier {
   // ---- Session lifecycle ----
 
   Future<bool> restore() async {
+    _tokens = await _readStored();
+    if (_tokens == null) return false;
+    notifyListeners();
+    return true;
+  }
+
+  Future<Tokens?> _readStored() async {
     final raw = await _storage.read(key: _storageKey);
-    if (raw == null) return false;
+    if (raw == null) return null;
     try {
-      _tokens = Tokens.fromJson(jsonDecode(raw) as Map<String, dynamic>);
-      notifyListeners();
-      return true;
+      return Tokens.fromJson(jsonDecode(raw) as Map<String, dynamic>);
     } catch (_) {
-      await _storage.delete(key: _storageKey);
-      return false;
+      return null;
     }
   }
 
@@ -108,10 +112,18 @@ class AuthController extends ChangeNotifier {
       _refreshInFlight ??= _doRefresh().whenComplete(() => _refreshInFlight = null);
 
   Future<Tokens> _doRefresh() async {
-    final t = _tokens;
-    if (t == null) throw AuthException('Not signed in');
+    // Another isolate (the background monitor) may have rotated the token; prefer
+    // the latest persisted copy so the UI and service don't invalidate each other.
+    final current = await _readStored() ?? _tokens;
+    if (current == null) throw AuthException('Not signed in');
+
+    // If the persisted access token is already fresh, adopt it — no network call.
+    if (!current.isExpired(skew: EbbConfig.refreshSkew)) {
+      _tokens = current;
+      return current;
+    }
     try {
-      final next = await _api.refresh(t.refreshToken, language: t.language);
+      final next = await _api.refresh(current.refreshToken, language: current.language);
       _tokens = next;
       await _persist();
       notifyListeners();

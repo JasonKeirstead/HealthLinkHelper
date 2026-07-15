@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,7 +6,7 @@ import '../app.dart';
 import '../config.dart';
 import '../models/enums.dart';
 import '../models/models.dart';
-import '../notifications/notifier.dart';
+import '../scanner/monitor_service.dart';
 import '../scanner/scanner.dart';
 import 'results_view.dart';
 
@@ -20,7 +18,7 @@ class ScanScreen extends StatefulWidget {
   State<ScanScreen> createState() => _ScanScreenState();
 }
 
-class _ScanScreenState extends State<ScanScreen> {
+class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   bool _loadingSetup = true;
   bool _scanning = false;
   String? _error;
@@ -40,24 +38,37 @@ class _ScanScreenState extends State<ScanScreen> {
   ScanProgress? _progress;
   List<LocationAvailability>? _results;
 
-  // Background monitor state.
+  // Background monitor runs as a foreground service (survives backgrounding),
+  // not an in-app timer.
   ScanRequest? _lastRequest;
   bool _monitoring = false;
   int _monitorMinutes = 15;
-  Timer? _monitorTimer;
 
   bool get _hasAvailability => _results?.any((r) => r.hasAvailability) ?? false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setup();
+    _refreshMonitoringState();
   }
 
   @override
   void dispose() {
-    _monitorTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The service may have found a slot and stopped itself while we were away.
+    if (state == AppLifecycleState.resumed) _refreshMonitoringState();
+  }
+
+  Future<void> _refreshMonitoringState() async {
+    final running = await AppointmentMonitor.isRunning;
+    if (mounted && running != _monitoring) setState(() => _monitoring = running);
   }
 
   Future<void> _setup() async {
@@ -132,37 +143,23 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _startMonitoring() async {
-    await Notifier.instance.requestPermission();
-    _monitorTimer?.cancel();
-    setState(() => _monitoring = true);
-    _monitorTimer =
-        Timer.periodic(Duration(minutes: _monitorMinutes), (_) => _monitorTick());
+    final req = _lastRequest;
+    if (req == null) return;
+    try {
+      await AppointmentMonitor.start(req, Duration(minutes: _monitorMinutes));
+      if (mounted) setState(() => _monitoring = true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Couldn\'t start background watch: $e')),
+        );
+      }
+    }
   }
 
   void _stopMonitoring() {
-    _monitorTimer?.cancel();
-    _monitorTimer = null;
+    if (_monitoring) AppointmentMonitor.stop();
     if (_monitoring && mounted) setState(() => _monitoring = false);
-  }
-
-  Future<void> _monitorTick() async {
-    final req = _lastRequest;
-    if (!_monitoring || req == null) return;
-    try {
-      final results = await widget.services.scanner.scan(req);
-      if (!mounted || !_monitoring) return;
-      final found = results.where((r) => r.hasAvailability).toList()
-        ..sort((a, b) => a.earliest!.compareTo(b.earliest!));
-      setState(() => _results = results);
-      if (found.isNotEmpty) {
-        final best = found.first;
-        await Notifier.instance
-            .showSlotFound(best, DateFormat.MMMEd().format(best.earliest!));
-        _stopMonitoring();
-      }
-    } catch (_) {
-      // transient error (e.g. token refresh hiccup) — keep watching
-    }
   }
 
   Future<void> _openBooking(LocationAvailability r) async {
