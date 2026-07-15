@@ -1,6 +1,6 @@
 {
-    "name": "healthlink_scanner",
-    "short_name": "healthlink_scanner",
+    "name": "Health Link Helper",
+    "short_name": "Health Link Helper",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

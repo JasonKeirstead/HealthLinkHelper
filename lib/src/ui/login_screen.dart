@@ -98,7 +98,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('HealthLink', style: Theme.of(context).textTheme.headlineSmall),
+        Text('Health Link Helper', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 4),
         Text('Sign in with your TELUS Health Connect account.',
             style: Theme.of(context).textTheme.bodyMedium),

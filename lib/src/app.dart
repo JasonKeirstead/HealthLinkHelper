@@ -31,7 +31,7 @@ class HealthLinkApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'HealthLink Scanner',
+      title: 'Health Link Helper',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
