@@ -29,23 +29,12 @@ class EbbConfig {
   /// Auth endpoint version header the app sends.
   static const String endpointVersion = '2024-02-07';
 
-  /// The web app the WebView loads for interactive Google/Apple sign-in.
-  static const String loginUrl =
-      'https://thconnect.telushealth.com/login/landing';
-
-  /// Origin whose localStorage holds the tokens after login.
+  /// Web origin used to build the "open booking" hand-off URL.
   static const String appOrigin = 'https://thconnect.telushealth.com';
-
-  /// localStorage keys the web app writes its tokens to.
-  static const String accessTokenLsKey = 'EBB_ACCESS_TOKEN';
-  static const String refreshTokenLsKey = 'EBB_REFRESH_TOKEN';
 
   /// Default UI language sent as the `x-language` header.
   static const String defaultLanguage = 'en';
 
   /// Refresh the access token this far before its JWT `exp` to avoid races.
   static const Duration refreshSkew = Duration(seconds: 45);
-
-  /// Access-token lifetime is only ~5 min; never cache longer than this.
-  static const Duration accessTokenMaxAge = Duration(minutes: 5);
 }

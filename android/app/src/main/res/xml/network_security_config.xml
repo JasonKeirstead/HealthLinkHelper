@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hardens TLS trust for the app:
+   * cleartext (plain HTTP) is never permitted;
+   * only *system* CAs are trusted, so a user-installed / corporate-proxy CA
+     cannot MITM the app's traffic (the realistic MITM vector on Android).
+  Strict certificate/public-key pinning is intentionally NOT used: the backend
+  serves Let's Encrypt certs (~90-day rotation, new key per renewal), so a hard
+  pin would periodically lock the app out of the appointment API.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">telushealth.com</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

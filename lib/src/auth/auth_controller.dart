@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../config.dart';
 import 'auth_api.dart';
 import 'tokens.dart';
 
@@ -19,7 +20,14 @@ class AuthException implements Exception {
 class AuthController extends ChangeNotifier {
   AuthController({AuthApi? api, FlutterSecureStorage? storage})
       : _api = api ?? AuthApi(),
-        _storage = storage ?? const FlutterSecureStorage();
+        _storage = storage ??
+            const FlutterSecureStorage(
+              // Encrypt at rest with the Android Keystore (not plain prefs),
+              // and keep the token unreadable until first unlock on iOS.
+              aOptions: AndroidOptions(encryptedSharedPreferences: true),
+              iOptions: IOSOptions(
+                  accessibility: KeychainAccessibility.first_unlock_this_device),
+            );
 
   static const _storageKey = 'ebb_tokens_v1';
 
@@ -88,7 +96,7 @@ class AuthController extends ChangeNotifier {
   Future<String> validAccessToken() async {
     final t = _tokens;
     if (t == null) throw AuthException('Not signed in');
-    if (t.isExpired(skew: const Duration(seconds: 45))) {
+    if (t.isExpired(skew: EbbConfig.refreshSkew)) {
       return (await _refresh()).accessToken;
     }
     return t.accessToken;

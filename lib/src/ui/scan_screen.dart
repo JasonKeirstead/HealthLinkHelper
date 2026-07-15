@@ -166,8 +166,9 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _openBooking(LocationAvailability r) async {
-    final url = Uri.parse(
-        '${EbbConfig.appOrigin}/${_patient!.accountId}/booking/new-appointment');
+    final url = Uri.parse(EbbConfig.appOrigin).replace(
+      pathSegments: [_patient!.accountId, 'booking', 'new-appointment'],
+    );
     final earliest = r.earliest;
     final when = earliest == null ? '' : ' — try ${DateFormat.yMMMMd().format(earliest)}';
     if (mounted) {
