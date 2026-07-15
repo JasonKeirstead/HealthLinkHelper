@@ -203,11 +203,15 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
         ],
       ),
-      body: _loadingSetup
-          ? const Center(child: CircularProgressIndicator())
-          : (_error != null && _results == null)
-              ? _ErrorView(message: _error!, onRetry: _setup)
-              : _buildBody(),
+      // SafeArea keeps the bottom bar (e.g. "Start watching") clear of the
+      // Android navigation bar under edge-to-edge (targetSdk 35+).
+      body: SafeArea(
+        child: _loadingSetup
+            ? const Center(child: CircularProgressIndicator())
+            : (_error != null && _results == null)
+                ? _ErrorView(message: _error!, onRetry: _setup)
+                : _buildBody(),
+      ),
     );
   }
 
