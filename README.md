@@ -1,113 +1,117 @@
-# HealthLink Scanner (Flutter)
+# 🧑‍⚕️ Health Link Helper
 
-Personal mobile + web app that scans **all** Lien Santé NB Health link (TELUS Health
-Connect) locations for the next N months and surfaces the soonest open appointment of a
-chosen type — then hands off to TELUS to book.
+> ## ⚠️ USE AT YOUR OWN RISK — NO WARRANTY
+> This is **unofficial** software provided **“AS IS”, without warranty of any kind**, express or
+> implied. You assume **all risk** for using it. It is **not affiliated with, authorized, or endorsed
+> by TELUS, TELUS Health, or Lien Santé NB / NB Health Link.** It talks to a third‑party service that
+> can change or break at any time, and it may stop working without notice. Do not rely on it for
+> urgent or time‑critical medical needs. By downloading, installing, or using it you accept full
+> responsibility for the consequences.
 
-Built against the TELUS Health Connect ("EBB") GraphQL API.
+---
 
-## Status
+**Health Link Helper** is an open-source Android app that helps you find an available appointment on
+**Lien Santé NB / NB Health Link** (which runs on TELUS Health Connect). Instead of checking each
+clinic one at a time, it scans **every location at once**, across the next **1–6 months**, for the
+appointment type you choose — and tells you where the soonest opening is, so you can grab it.
 
-| Piece | State |
-|---|---|
-| Pure-Dart core (models, GraphQL ops, API client, scanner, auth/refresh) | ✅ implemented + unit-tested |
-| Account/chart bootstrap (no hardcoded IDs) | ✅ implemented |
-| Scanner engine (all-locations × N-month sweep, ranked) | ✅ implemented + tested |
-| Mobile UI (patient/type/modality, months 1–6, per-location toggles, results) | ✅ implemented |
-| Background monitor + high-priority notification when a slot opens | ✅ implemented (in-app timer — see **Monitoring**) |
-| **Email/password login (+ 2FA)** | ✅ implemented + unit-tested — the only supported login |
-| SSO (Google/Apple) | ❌ not supported by design — see **Auth** |
-| Web target (CORS proxy + web auth) | ⛔ not yet — see **Web** |
+It’s a read-only helper: it **finds** openings and hands you off to the official site to actually
+**book**. It never books anything by itself.
 
-## Run
+## What it does
 
-Verified against **Flutter 3.44.6 / Dart 3.12.2** (WSL). `android/ios/web` scaffolding is generated,
-deps resolve, `flutter analyze` is clean, and `flutter test` is green.
+- 🔎 **Scan all clinics at once** for a chosen appointment type (e.g. Medical Visit), in-person or virtual.
+- 🗓️ **Look 1–6 months ahead** (default: 1 month).
+- ✅ **Pick which clinics** to include with per-location toggles.
+- 🔔 **“Keep checking” background alerts** — if nothing’s open now, it re-checks on an interval and
+  sends a **high-priority notification** the moment a slot opens up.
+- ↗️ **One tap to book** — opens the official booking page for that clinic (you complete the booking there).
+
+## Requirements
+
+- An **Android** phone (roughly **Android 8.0+**).
+- A **Lien Santé NB / NB Health Link** account **that has an email + password set.**
+  - ⚠️ **If your account only uses “Sign in with Google/Apple,” this app cannot log you in.** That’s a
+    hard limitation imposed by Google/Apple (they block third-party apps from using their sign-in), not
+    a bug. If you can, set a password on your account and use that. See the FAQ below.
+- Two-factor authentication (email/SMS code) is supported.
+
+## Install (Android)
+
+1. Go to the **[Releases](../../releases)** page and download the latest **`app-release.apk`**.
+2. On your phone, open the APK (Files/Downloads app). Android will ask you to allow installs from that
+   app — enable **“Install unknown apps”** for it.
+3. Tap **Install**, then open **Health Link Helper**.
+
+> The APK is signed with the developer’s key. Android may warn that it’s from an “unknown developer” —
+> that’s normal for apps installed outside the Play Store.
+
+## How to use it
+
+1. **Sign in** with your NB Health Link **email and password** (enter the 2FA code if prompted).
+2. Choose the **appointment type**, **In-person / Virtual**, and how many **months** ahead to look.
+3. Toggle the **clinics** you care about, then tap **Search**.
+4. See the soonest openings ranked first. Tap **Book** to open the official site and finish booking.
+5. Nothing open? Tap **Keep checking**, pick an interval, and you’ll get a notification when a slot appears.
+
+## FAQ
+
+**Why can’t I sign in with Google/Apple?**
+Google and Apple deliberately block their sign-in from working inside third-party apps like this one
+(both the embedded-web method and the native method are locked down unless the app is registered in
+the *provider’s own* project — which only TELUS controls). There is no way around it from this app.
+Use an email/password login instead.
+
+**Does it store my password or send my data anywhere?**
+No. The app talks **only** to the official NB Health Link API — there are no analytics and no servers
+run by this project. Your login tokens are kept in Android’s **Keystore-encrypted** storage on your
+device, app backups are disabled, and the app trusts only system certificate authorities.
+
+**Will there be an iPhone version?**
+Technically possible (it’s built with Flutter), but iOS requires a Mac to build and an Apple Developer
+account to distribute, and iOS has no simple “download-and-install” like Android. Not currently provided.
+
+**Is this allowed / against TELUS’s terms?**
+This is an unofficial client and may be against the service’s Terms of Use. Use it respectfully and at
+your own risk — see the disclaimer at the top. Please don’t abuse the service (keep the check interval
+reasonable).
+
+## Build from source
+
+Requires the [Flutter SDK](https://docs.flutter.dev/get-started/install) (built/tested on 3.44).
 
 ```bash
-cd app
 flutter pub get
-flutter test        # 7 tests: auth API (sign-in/2FA/refresh) + scanner ranking
-flutter analyze     # no issues
-flutter run         # on a connected Android/iOS device
+flutter test        # unit tests for the auth API + scanner
+flutter run         # run on a connected device/emulator
 ```
 
-Android needs `INTERNET` permission (default). The scanner needs a real signed-in session, so run it
-on a device against a TELUS account with a password set (see **Auth**).
+To build a **release APK**, create `android/key.properties` pointing at your own signing keystore:
 
-## Architecture
-
-```
-lib/
-  main.dart                     bootstrap: restore session → HealthLinkApp
-  src/
-    config.dart                 endpoints, localStorage keys, token skew
-    models/                     enums (BookingType/VisitType/Modality) + data classes
-    api/
-      graphql_ops.dart          verbatim captured queries + mutations
-      api_client.dart           GraphQLTransport (Direct) + EbbApi (+ auth-retry) + GraphQLExecutor seam
-      booking_repository.dart    typed booking queries
-      account_bootstrap.dart     accounts + charts → List<Patient>
-    auth/
-      tokens.dart               Tokens + JWT-exp decode (pure, tested)
-      auth_api.dart             email/password sign-in, 2FA, refresh endpoints (tested)
-      auth_controller.dart      session state + token freshness, secure storage
-    scanner/scanner.dart        the sweep engine (concurrency-limited, ranked)
-    ui/                         login_screen + scan_screen + results_view
+```properties
+storePassword=…
+keyPassword=…
+keyAlias=…
+storeFile=my-release-key.jks
 ```
 
-The whole `src/api`, `src/scanner`, `src/models`, `src/auth/tokens.dart` layer is pure Dart
-and reused unchanged on web. Only `login_webview.dart` (auth capture) and the transport
-swap out per platform.
+Then:
 
-## Auth (email/password only)
-
-Login is a **direct native call** — no WebView, no SSO:
-
-```
-POST /auth/sign-in   body {username, password}
-  headers: ClientId: d0Vi, endpoint-version: 2024-02-07, x-long-lived-refresh-token: <bool>
-  → 200 with {accessToken, refreshToken}    (signed in)
-  → 200 with {ref, primaryTwoFactorAuthenticationMethod, isEmailEnabled, isSMSEnabled, email}
-        → POST /auth/services/two-factor/request {ref, type}
-        → POST /auth/services/two-factor/confirm {ref, pin}  (header x-check-2fa: true) → tokens
-POST /auth/refresh   body {refreshToken}   header ClientId: d0Vi  → rotated {accessToken, refreshToken}
+```bash
+flutter build apk --release   # → build/app/outputs/flutter-apk/app-release.apk
 ```
 
-Key facts (from the app bundle / live capture):
-- **`ClientId` is a constant `"d0Vi"`** (`Dk(){return "d0Vi"}`) — not device-generated. Hardcoded in `config.dart`.
-- Tokens are camelCase and both rotate on every refresh; access token TTL ~5 min.
+(Without `key.properties` the release build falls back to the debug key so `flutter run` still works.)
 
-**Why SSO is not supported (both paths empirically closed for a third-party app):**
-- **Embedded WebView** → Google rejects OAuth in embedded views ("insecure browser" / disallowed_useragent).
-- **Native `google_sign_in`** → Google Play Services returns `UNREGISTERED_ON_API_CONSOLE`: it won't
-  mint an ID token for TELUS's web client on behalf of our app, because our package/signing key isn't
-  registered in TELUS's Google Cloud project (only TELUS can add it).
+### How it’s built (brief)
 
-So this app requires a TELUS account with a **password** set. (Reference for completeness: TELUS's own
-native login is `POST /auth/sign-in/{google,apple}` with a provider `idToken`.)
+Flutter app over the NB Health Link / TELUS Health Connect **GraphQL** API. Login is native
+email/password + 2FA (`/auth/sign-in` → `/auth/refresh`, 5-minute access tokens). The scanner sweeps
+`locations → services → available days` across all clinics with limited concurrency and ranks the
+results. Background monitoring is an in-app timer + local notification (reliable while the app is open
+or recently backgrounded).
 
-## Monitoring (notify me when a slot opens)
+## License / warranty
 
-When a search finds nothing, the results screen offers **"Keep checking in the background"** with an
-interval (5/15/30/60 min). It re-runs the same search on a `Timer.periodic`; the moment any location
-has an open day it fires a **high-importance local notification** (channel `slot_alerts`, `Importance.max`)
-and stops. Requires notification permission (requested on start; `POST_NOTIFICATIONS` in the manifest).
-
-**Reliability caveat:** this is an in-app timer, so it runs while the app is foregrounded or recently
-backgrounded. Android will suspend timers under Doze once the app is fully closed for a while. For
-truly-closed-app polling, the upgrade is a foreground service or `workmanager` periodic task (min 15 min)
-that reconstructs auth+scan in a background isolate — left as a follow-up.
-
-## Web (next phase)
-
-Flutter web can't WebView-capture cross-origin tokens, and `backend.thconnect.telushealth.com`
-will CORS-block our origin. Plan: a thin proxy (holds refresh token, adds CORS, proxies GraphQL)
-+ a browser-extension or paste-based token hand-off. The Dart core is reused as-is behind the
-`GraphQLTransport` interface (add a `ProxyGraphQLTransport`).
-
-## Ethics
-
-The scanner is read-only and mirrors the app's own calls; keep concurrency modest (default 4).
-Booking (`createAppointment`) is real and consumes scarce slots — the app only ever opens the
-TELUS booking page; it never books automatically.
+Provided **as-is, with no warranty** (see the top of this file). No license is granted beyond viewing
+the source unless a `LICENSE` file is added by the author. You are responsible for how you use it.
