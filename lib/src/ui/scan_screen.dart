@@ -48,6 +48,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   ScanRequest? _lastRequest;
   bool _monitoring = false;
   int _monitorMinutes = 15;
+  bool _alarmOnFound = false;
 
   bool get _hasAvailability => _results?.any((r) => r.hasAvailability) ?? false;
 
@@ -84,6 +85,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     try {
       _saved = await _prefs.load();
       if (_saved.months != null) _months = _saved.months!.clamp(1, 6);
+      _alarmOnFound = _saved.alarmOnFound ?? false;
       final mi = _saved.modalityIndex;
       if (mi != null && mi >= 0 && mi < Modality.values.length) {
         _modality = Modality.values[mi];
@@ -108,6 +110,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       months: _months,
       modalityIndex: _modality.index,
       issueName: _issue?.name,
+      alarmOnFound: _alarmOnFound,
     ));
   }
 
@@ -219,7 +222,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     final req = _lastRequest;
     if (req == null) return;
     try {
-      await AppointmentMonitor.start(req, Duration(minutes: _monitorMinutes));
+      await AppointmentMonitor.start(req, Duration(minutes: _monitorMinutes),
+          alarm: _alarmOnFound);
       if (mounted) setState(() => _monitoring = true);
     } catch (e) {
       if (mounted) {
@@ -371,6 +375,11 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
             monitoring: _monitoring,
             minutes: _monitorMinutes,
             onMinutes: (m) => setState(() => _monitorMinutes = m),
+            alarm: _alarmOnFound,
+            onAlarm: (v) {
+              setState(() => _alarmOnFound = v);
+              _savePrefs();
+            },
             onStart: _startMonitoring,
             onStop: _stopMonitoring,
           ),
@@ -384,6 +393,8 @@ class _MonitorBar extends StatelessWidget {
     required this.monitoring,
     required this.minutes,
     required this.onMinutes,
+    required this.alarm,
+    required this.onAlarm,
     required this.onStart,
     required this.onStop,
   });
@@ -391,6 +402,8 @@ class _MonitorBar extends StatelessWidget {
   final bool monitoring;
   final int minutes;
   final ValueChanged<int> onMinutes;
+  final bool alarm;
+  final ValueChanged<bool> onAlarm;
   final VoidCallback onStart;
   final VoidCallback onStop;
 
@@ -407,8 +420,8 @@ class _MonitorBar extends StatelessWidget {
                       height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2)),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                        'Watching every $minutes min — you\'ll get a notification when a slot opens.'),
+                    child: Text('Watching every $minutes min — '
+                        '${alarm ? 'a loud alarm' : 'a notification'} will alert you when a slot opens.'),
                   ),
                   TextButton(onPressed: onStop, child: const Text('Stop')),
                 ],
@@ -418,7 +431,15 @@ class _MonitorBar extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Text('No openings right now. Keep checking in the background?'),
-                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: alarm,
+                    onChanged: (v) => onAlarm(v ?? false),
+                    title: const Text('Sound an alarm when found (rings until dismissed)'),
+                  ),
+                  const SizedBox(height: 4),
                   Row(
                     children: [
                       const Text('Every'),

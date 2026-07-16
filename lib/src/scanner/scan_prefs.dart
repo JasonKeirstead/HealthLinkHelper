@@ -9,18 +9,21 @@ class ScanPrefs {
     this.months,
     this.modalityIndex,
     this.issueName,
+    this.alarmOnFound,
   });
 
   final Set<String>? selectedLocationIds;
   final int? months;
   final int? modalityIndex;
   final String? issueName;
+  final bool? alarmOnFound;
 
   Map<String, dynamic> toJson() => {
         'locs': selectedLocationIds?.toList(),
         'months': months,
         'modality': modalityIndex,
         'issue': issueName,
+        'alarm': alarmOnFound,
       };
 
   factory ScanPrefs.fromJson(Map<String, dynamic> j) => ScanPrefs(
@@ -28,6 +31,7 @@ class ScanPrefs {
         months: j['months'] as int?,
         modalityIndex: j['modality'] as int?,
         issueName: j['issue'] as String?,
+        alarmOnFound: j['alarm'] as bool?,
       );
 }
 

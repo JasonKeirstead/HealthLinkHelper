@@ -25,6 +25,7 @@ void monitorTaskCallback() {
 class _MonitorTaskHandler extends TaskHandler {
   AvailabilityScanner? _scanner;
   ScanRequest? _request;
+  bool _alarm = false;
   bool _busy = false;
 
   @override
@@ -35,7 +36,11 @@ class _MonitorTaskHandler extends TaskHandler {
       BookingRepository(EbbApi(DirectGraphQLTransport(), auth)),
     );
     final raw = await FlutterForegroundTask.getData<String>(key: _kReqKey);
-    if (raw != null) _request = _decode(raw);
+    if (raw != null) {
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      _request = _decode(m);
+      _alarm = (m['alarm'] as bool?) ?? false;
+    }
     try {
       await Notifier.instance.init();
     } catch (_) {}
@@ -59,7 +64,11 @@ class _MonitorTaskHandler extends TaskHandler {
         final best = found.first;
         final label = DateFormat.MMMEd().format(best.earliest!);
         try {
-          await Notifier.instance.showSlotFound(best, label);
+          if (_alarm) {
+            await Notifier.instance.showSlotAlarm(best, label);
+          } else {
+            await Notifier.instance.showSlotFound(best, label);
+          }
         } catch (_) {}
         FlutterForegroundTask.updateService(
           notificationTitle: 'Appointment available!',
@@ -83,8 +92,7 @@ class _MonitorTaskHandler extends TaskHandler {
   @override
   Future<void> onDestroy(DateTime timestamp) async {}
 
-  ScanRequest _decode(String s) {
-    final m = jsonDecode(s) as Map<String, dynamic>;
+  ScanRequest _decode(Map<String, dynamic> m) {
     return ScanRequest(
       patient: Patient(
         accountId: m['a'] as String,
@@ -124,7 +132,7 @@ class AppointmentMonitor {
 
   static Future<bool> get isRunning => FlutterForegroundTask.isRunningService;
 
-  static Future<void> start(ScanRequest req, Duration interval) async {
+  static Future<void> start(ScanRequest req, Duration interval, {bool alarm = false}) async {
     // Notifications for the ongoing + "found" alerts; battery exemption helps
     // aggressive OEMs (e.g. Samsung) keep the service alive.
     await FlutterForegroundTask.requestNotificationPermission();
@@ -135,7 +143,7 @@ class AppointmentMonitor {
     } catch (_) {}
 
     _init(interval);
-    await FlutterForegroundTask.saveData(key: _kReqKey, value: _encode(req));
+    await FlutterForegroundTask.saveData(key: _kReqKey, value: _encode(req, alarm));
     await FlutterForegroundTask.startService(
       notificationTitle: 'Watching for openings',
       notificationText: 'Checking every ${interval.inMinutes} min…',
@@ -145,7 +153,7 @@ class AppointmentMonitor {
 
   static Future<void> stop() => FlutterForegroundTask.stopService();
 
-  static String _encode(ScanRequest r) => jsonEncode({
+  static String _encode(ScanRequest r, bool alarm) => jsonEncode({
         'a': r.patient.accountId,
         'c': r.patient.chartId,
         'n': r.patient.fullName,
@@ -153,5 +161,6 @@ class AppointmentMonitor {
         'm': r.modality.index,
         'mo': r.monthsAhead,
         'l': r.includeLocationIds?.toList(),
+        'alarm': alarm,
       });
 }
