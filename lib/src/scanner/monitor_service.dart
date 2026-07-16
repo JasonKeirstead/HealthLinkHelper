@@ -43,10 +43,10 @@ class _MonitorTaskHandler extends TaskHandler {
 
   @override
   void onRepeatEvent(DateTime timestamp) {
-    _tick(timestamp);
+    _tick();
   }
 
-  Future<void> _tick(DateTime ts) async {
+  Future<void> _tick() async {
     final scanner = _scanner;
     final req = _request;
     if (scanner == null || req == null || _busy) return;
@@ -69,7 +69,8 @@ class _MonitorTaskHandler extends TaskHandler {
       } else {
         FlutterForegroundTask.updateService(
           notificationTitle: 'Watching for openings',
-          notificationText: 'No openings yet · last checked ${DateFormat.jm().format(ts)}',
+          notificationText:
+              'No openings yet · last checked ${DateFormat.jm().format(DateTime.now())}',
         );
       }
     } catch (_) {

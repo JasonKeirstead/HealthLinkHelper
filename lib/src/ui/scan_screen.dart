@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -7,6 +8,7 @@ import '../config.dart';
 import '../models/enums.dart';
 import '../models/models.dart';
 import '../scanner/monitor_service.dart';
+import '../scanner/scan_prefs.dart';
 import '../scanner/scanner.dart';
 import 'results_view.dart';
 
@@ -34,6 +36,9 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
 
   List<ClinicLocation> _locations = const [];
   final Set<String> _selectedLocationIds = {};
+
+  final ScanPrefsStore _prefs = ScanPrefsStore();
+  ScanPrefs _saved = const ScanPrefs();
 
   ScanProgress? _progress;
   List<LocationAvailability>? _results;
@@ -77,6 +82,12 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       _error = null;
     });
     try {
+      _saved = await _prefs.load();
+      if (_saved.months != null) _months = _saved.months!.clamp(1, 6);
+      final mi = _saved.modalityIndex;
+      if (mi != null && mi >= 0 && mi < Modality.values.length) {
+        _modality = Modality.values[mi];
+      }
       final patients = await widget.services.bootstrap.loadPatients();
       if (patients.isEmpty) {
         throw Exception('No patient charts found on this account.');
@@ -91,6 +102,62 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     }
   }
 
+  void _savePrefs() {
+    _prefs.save(ScanPrefs(
+      selectedLocationIds: _selectedLocationIds.toSet(),
+      months: _months,
+      modalityIndex: _modality.index,
+      issueName: _issue?.name,
+    ));
+  }
+
+  void _snack(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
+  /// Select only the clinics within 100 km of the user's current location.
+  Future<void> _selectNearby() async {
+    const radiusMeters = 100 * 1000.0;
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        _snack('Location is off — turn on location services to use Nearby.');
+        return;
+      }
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
+        _snack('Location permission is needed for Nearby.');
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition();
+      final near = <String>{};
+      var missingCoords = false;
+      for (final loc in _locations) {
+        if (loc.latitude == null || loc.longitude == null) {
+          missingCoords = true;
+          continue;
+        }
+        final d = Geolocator.distanceBetween(
+            pos.latitude, pos.longitude, loc.latitude!, loc.longitude!);
+        if (d <= radiusMeters) near.add(loc.id);
+      }
+      setState(() => _selectedLocationIds
+        ..clear()
+        ..addAll(near));
+      _savePrefs();
+      _snack(near.isEmpty
+          ? 'No clinics within 100 km of you${missingCoords ? ' (some have no map location)' : ''}.'
+          : 'Selected ${near.length} clinic(s) within 100 km.');
+    } catch (e) {
+      _snack('Couldn\'t get your location: $e');
+    }
+  }
+
   /// Load the location list (for the toggles) and the appointment-type options.
   Future<void> _loadForPatient() async {
     final chartId = _patient!.chartId;
@@ -99,15 +166,21 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       throw Exception('No bookable locations for this patient.');
     }
     _locations = locations;
+    final ids = locations.map((l) => l.id).toSet();
+    final savedLocs = _saved.selectedLocationIds?.intersection(ids);
     _selectedLocationIds
       ..clear()
-      ..addAll(locations.map((l) => l.id)); // default: everything selected
+      // Restore the remembered selection; default to all if none saved.
+      ..addAll(savedLocs != null && savedLocs.isNotEmpty ? savedLocs : ids);
 
     final issues = await widget.services.booking.presentingIssues(chartId, locations.first.id);
     _issues = issues;
     _issue = issues.firstWhere(
-      (i) => i.name.toLowerCase().contains('medical visit'),
-      orElse: () => issues.first,
+      (i) => i.name == _saved.issueName,
+      orElse: () => issues.firstWhere(
+        (i) => i.name.toLowerCase().contains('medical visit'),
+        orElse: () => issues.first,
+      ),
     );
     if (mounted) setState(() {});
   }
@@ -229,20 +302,36 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
           },
           issues: _issues,
           issue: _issue,
-          onIssue: (i) => setState(() => _issue = i),
+          onIssue: (i) {
+            setState(() => _issue = i);
+            _savePrefs();
+          },
           modality: _modality,
-          onModality: (m) => setState(() => _modality = m),
+          onModality: (m) {
+            setState(() => _modality = m);
+            _savePrefs();
+          },
           months: _months,
-          onMonths: (m) => setState(() => _months = m),
+          onMonths: (m) {
+            setState(() => _months = m);
+            _savePrefs();
+          },
           locations: _locations,
           selectedIds: _selectedLocationIds,
-          onToggleLocation: (id, on) => setState(() {
-            on ? _selectedLocationIds.add(id) : _selectedLocationIds.remove(id);
-          }),
-          onSelectAll: (all) => setState(() {
-            _selectedLocationIds.clear();
-            if (all) _selectedLocationIds.addAll(_locations.map((l) => l.id));
-          }),
+          onToggleLocation: (id, on) {
+            setState(() {
+              on ? _selectedLocationIds.add(id) : _selectedLocationIds.remove(id);
+            });
+            _savePrefs();
+          },
+          onSelectAll: (all) {
+            setState(() {
+              _selectedLocationIds.clear();
+              if (all) _selectedLocationIds.addAll(_locations.map((l) => l.id));
+            });
+            _savePrefs();
+          },
+          onNearby: _selectNearby,
           onScan: _runScan,
         ),
       );
@@ -372,6 +461,7 @@ class _Options extends StatelessWidget {
     required this.selectedIds,
     required this.onToggleLocation,
     required this.onSelectAll,
+    required this.onNearby,
     required this.onScan,
   });
 
@@ -389,6 +479,7 @@ class _Options extends StatelessWidget {
   final Set<String> selectedIds;
   final void Function(String id, bool on) onToggleLocation;
   final ValueChanged<bool> onSelectAll;
+  final VoidCallback onNearby;
   final VoidCallback onScan;
 
   @override
@@ -457,6 +548,14 @@ class _Options extends StatelessWidget {
                 TextButton(onPressed: () => onSelectAll(false), child: const Text('None')),
               ]),
             ],
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: onNearby,
+              icon: const Icon(Icons.my_location, size: 18),
+              label: const Text('Nearby (100 km)'),
+            ),
           ),
           Card(
             margin: EdgeInsets.zero,
