@@ -4,7 +4,11 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../models/models.dart';
 
-/// Thin wrapper over local notifications for the "slot found" alert.
+/// Local notifications for the "slot found" alert.
+///
+/// Alerts are posted as their own notification (id [_alertId]) on channels
+/// separate from the ongoing foreground-service notification, so Android can
+/// rank/prioritize them independently and the user can tune them per-channel.
 class Notifier {
   Notifier._();
   static final Notifier instance = Notifier._();
@@ -12,14 +16,18 @@ class Notifier {
   final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
   bool _initialized = false;
 
-  static const String _channelId = 'slot_alerts';
-  static const String _channelName = 'Appointment alerts';
-  static const String _channelDesc = 'High-priority alerts when an appointment slot opens up';
+  /// Distinct from the foreground service's notification id (1000).
+  static const int _alertId = 8801;
 
-  static const String _alarmChannelId = 'slot_alarm';
-  static const String _alarmChannelName = 'Appointment alarm';
+  static const String _channelId = 'slot_alerts_v2';
+  static const String _channelName = 'Appointment found';
+  static const String _channelDesc =
+      'High-priority alert when an appointment slot becomes available';
+
+  static const String _alarmChannelId = 'slot_alarm_v2';
+  static const String _alarmChannelName = 'Appointment found (alarm)';
   static const String _alarmChannelDesc =
-      'Loud alarm that rings until dismissed when a slot opens up';
+      'Loud alarm that rings until dismissed when an appointment slot becomes available';
 
   Future<void> init() async {
     if (_initialized) return;
@@ -33,15 +41,17 @@ class Notifier {
 
     final android_ =
         _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    // Standard alert channel.
+
+    // High-priority "found" channel (sound + heads-up).
     await android_?.createNotificationChannel(const AndroidNotificationChannel(
       _channelId,
       _channelName,
       description: _channelDesc,
       importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
     ));
-    // Loud alarm channel — plays on the alarm audio stream (loud, cuts through
-    // vibrate/DND), vibrates, at max importance.
+    // Loud alarm channel — alarm audio stream (loud, cuts through vibrate/DND).
     await android_?.createNotificationChannel(const AndroidNotificationChannel(
       _alarmChannelId,
       _alarmChannelName,
@@ -59,7 +69,6 @@ class Notifier {
     final android =
         _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     final androidGranted = await android?.requestNotificationsPermission();
-    // Needed on Android 14+ for the alarm alert to pop over the lock screen.
     try {
       await android?.requestFullScreenIntentPermission();
     } catch (_) {}
@@ -69,51 +78,53 @@ class Notifier {
     return androidGranted ?? iosGranted ?? true;
   }
 
-  /// A normal high-priority notification.
-  Future<void> showSlotFound(LocationAvailability r, String dateLabel) async {
-    await _plugin.show(
-      1,
-      'Appointment available',
-      '${r.location.shortLabel} — soonest $dateLabel. Tap to open the app and book.',
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          _channelId,
-          _channelName,
-          channelDescription: _channelDesc,
-          importance: Importance.max,
-          priority: Priority.high,
-          category: AndroidNotificationCategory.reminder,
-        ),
-        iOS: DarwinNotificationDetails(presentAlert: true, presentSound: true),
-      ),
-    );
-  }
+  Future<void> showSlotFound(LocationAvailability r, String dateLabel, {required bool alarm}) =>
+      _showAlert(
+        title: alarm ? 'Appointment available!' : 'Appointment available',
+        body: '${r.location.shortLabel} — soonest $dateLabel. Open the app to book.',
+        alarm: alarm,
+      );
 
-  /// A loud alarm that keeps ringing until the user dismisses the notification.
-  Future<void> showSlotAlarm(LocationAvailability r, String dateLabel) async {
+  /// Fire a sample alert so the user can verify sound/priority settings.
+  Future<void> showTest({required bool alarm}) => _showAlert(
+        title: alarm ? 'Test alarm' : 'Test alert',
+        body: alarm
+            ? 'This is how it will ring when a slot opens. Dismiss to stop.'
+            : 'This is how you\'ll be notified when a slot opens.',
+        alarm: alarm,
+      );
+
+  Future<void> _showAlert({
+    required String title,
+    required String body,
+    required bool alarm,
+  }) async {
+    await init();
     await _plugin.show(
-      1,
-      'Appointment available!',
-      '${r.location.shortLabel} — soonest $dateLabel. Open the app to book.',
+      _alertId,
+      title,
+      body,
       NotificationDetails(
         android: AndroidNotificationDetails(
-          _alarmChannelId,
-          _alarmChannelName,
-          channelDescription: _alarmChannelDesc,
+          alarm ? _alarmChannelId : _channelId,
+          alarm ? _alarmChannelName : _channelName,
+          channelDescription: alarm ? _alarmChannelDesc : _channelDesc,
           importance: Importance.max,
           priority: Priority.max,
-          category: AndroidNotificationCategory.alarm,
-          audioAttributesUsage: AudioAttributesUsage.alarm,
-          fullScreenIntent: true,
+          category: alarm ? AndroidNotificationCategory.alarm : AndroidNotificationCategory.reminder,
+          audioAttributesUsage:
+              alarm ? AudioAttributesUsage.alarm : AudioAttributesUsage.notification,
+          fullScreenIntent: alarm,
           enableVibration: true,
           playSound: true,
           // FLAG_INSISTENT: repeat the sound until the notification is dismissed.
-          additionalFlags: Int32List.fromList(<int>[4]),
+          additionalFlags: alarm ? Int32List.fromList(<int>[4]) : null,
         ),
-        iOS: const DarwinNotificationDetails(
+        iOS: DarwinNotificationDetails(
           presentAlert: true,
           presentSound: true,
-          interruptionLevel: InterruptionLevel.timeSensitive,
+          interruptionLevel:
+              alarm ? InterruptionLevel.timeSensitive : InterruptionLevel.active,
         ),
       ),
     );

@@ -7,6 +7,7 @@ import '../app.dart';
 import '../config.dart';
 import '../models/enums.dart';
 import '../models/models.dart';
+import '../notifications/notifier.dart';
 import '../scanner/monitor_service.dart';
 import '../scanner/scan_prefs.dart';
 import '../scanner/scanner.dart';
@@ -218,6 +219,19 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _testAlert() async {
+    try {
+      await Notifier.instance.requestPermission();
+      await Notifier.instance.showTest(alarm: _alarmOnFound);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Couldn\'t post a test alert: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _startMonitoring() async {
     final req = _lastRequest;
     if (req == null) return;
@@ -380,6 +394,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
               setState(() => _alarmOnFound = v);
               _savePrefs();
             },
+            onTest: _testAlert,
             onStart: _startMonitoring,
             onStop: _stopMonitoring,
           ),
@@ -395,6 +410,7 @@ class _MonitorBar extends StatelessWidget {
     required this.onMinutes,
     required this.alarm,
     required this.onAlarm,
+    required this.onTest,
     required this.onStart,
     required this.onStop,
   });
@@ -404,6 +420,7 @@ class _MonitorBar extends StatelessWidget {
   final ValueChanged<int> onMinutes;
   final bool alarm;
   final ValueChanged<bool> onAlarm;
+  final VoidCallback onTest;
   final VoidCallback onStart;
   final VoidCallback onStop;
 
@@ -438,6 +455,9 @@ class _MonitorBar extends StatelessWidget {
                     value: alarm,
                     onChanged: (v) => onAlarm(v ?? false),
                     title: const Text('Sound an alarm when found (rings until dismissed)'),
+                    // Lets the user confirm the alert actually gets through
+                    // (channel settings, DND, volume) before relying on it.
+                    secondary: TextButton(onPressed: onTest, child: const Text('Test')),
                   ),
                   const SizedBox(height: 4),
                   Row(

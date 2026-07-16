@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui';
 
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:intl/intl.dart';
@@ -16,6 +17,9 @@ const String _kReqKey = 'monitor_request_v1';
 /// Entry point for the background isolate that runs the foreground-service task.
 @pragma('vm:entry-point')
 void monitorTaskCallback() {
+  // This isolate has its own plugin registry. Without this, plugin channels
+  // (secure storage, local notifications) throw MissingPluginException here.
+  DartPluginRegistrant.ensureInitialized();
   FlutterForegroundTask.setTaskHandler(_MonitorTaskHandler());
 }
 
@@ -63,16 +67,19 @@ class _MonitorTaskHandler extends TaskHandler {
       if (found.isNotEmpty) {
         final best = found.first;
         final label = DateFormat.MMMEd().format(best.earliest!);
+        // The alert is its own notification on a high-priority channel — the
+        // ongoing service notification below is LOW/silent by design.
+        var alerted = true;
         try {
-          if (_alarm) {
-            await Notifier.instance.showSlotAlarm(best, label);
-          } else {
-            await Notifier.instance.showSlotFound(best, label);
-          }
-        } catch (_) {}
+          await Notifier.instance.showSlotFound(best, label, alarm: _alarm);
+        } catch (_) {
+          alerted = false;
+        }
         FlutterForegroundTask.updateService(
           notificationTitle: 'Appointment available!',
-          notificationText: '${best.location.shortLabel} — $label',
+          notificationText: alerted
+              ? '${best.location.shortLabel} — $label'
+              : '${best.location.shortLabel} — $label (alert failed — tap to open)',
         );
         await FlutterForegroundTask.stopService();
       } else {
