@@ -7,9 +7,11 @@ import 'package:intl/intl.dart';
 import '../api/api_client.dart';
 import '../api/booking_repository.dart';
 import '../auth/auth_controller.dart';
+import '../config.dart';
 import '../models/enums.dart';
 import '../models/models.dart';
 import '../notifications/notifier.dart';
+import 'last_found.dart';
 import 'scanner.dart';
 
 const String _kReqKey = 'monitor_request_v1';
@@ -67,19 +69,34 @@ class _MonitorTaskHandler extends TaskHandler {
       if (found.isNotEmpty) {
         final best = found.first;
         final label = DateFormat.MMMEd().format(best.earliest!);
+        final bookingUrl = EbbConfig.bookingUrl(req.patient.accountId).toString();
+
+        // Record what was found first, so the app screen can show it even if the
+        // notification itself is suppressed (e.g. by Do Not Disturb).
+        try {
+          await LastFoundStore().save(LastFound(
+            locationName: best.location.displayName,
+            city: best.location.city,
+            earliest: best.earliest!,
+            foundAt: DateTime.now(),
+            bookingUrl: bookingUrl,
+          ));
+        } catch (_) {}
+
         // The alert is its own notification on a high-priority channel — the
         // ongoing service notification below is LOW/silent by design.
         var alerted = true;
         try {
-          await Notifier.instance.showSlotFound(best, label, alarm: _alarm);
+          await Notifier.instance
+              .showSlotFound(best, label, alarm: _alarm, bookingUrl: bookingUrl);
         } catch (_) {
           alerted = false;
         }
         FlutterForegroundTask.updateService(
           notificationTitle: 'Appointment available!',
           notificationText: alerted
-              ? '${best.location.shortLabel} — $label'
-              : '${best.location.shortLabel} — $label (alert failed — tap to open)',
+              ? '${best.location.displayName} — $label'
+              : '${best.location.displayName} — $label (alert failed — tap to open)',
         );
         await FlutterForegroundTask.stopService();
       } else {

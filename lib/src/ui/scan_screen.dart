@@ -7,7 +7,9 @@ import '../app.dart';
 import '../config.dart';
 import '../models/enums.dart';
 import '../models/models.dart';
+import '../notifications/native_bridge.dart';
 import '../notifications/notifier.dart';
+import '../scanner/last_found.dart';
 import '../scanner/monitor_service.dart';
 import '../scanner/scan_prefs.dart';
 import '../scanner/scanner.dart';
@@ -50,6 +52,10 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   bool _monitoring = false;
   int _monitorMinutes = 15;
   bool _alarmOnFound = false;
+  bool _dndBypass = false;
+
+  final LastFoundStore _lastFoundStore = LastFoundStore();
+  LastFound? _lastFound;
 
   bool get _hasAvailability => _results?.any((r) => r.hasAvailability) ?? false;
 
@@ -76,6 +82,42 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   Future<void> _refreshMonitoringState() async {
     final running = await AppointmentMonitor.isRunning;
     if (mounted && running != _monitoring) setState(() => _monitoring = running);
+    // The service may have found (and recorded) a slot while we were away, and
+    // the user may have granted DND access in system settings.
+    await _loadLastFound();
+    final bypass = await NativeBridge.isDndAccessGranted();
+    if (mounted && bypass != _dndBypass) setState(() => _dndBypass = bypass);
+  }
+
+  Future<void> _loadLastFound() async {
+    final lf = await _lastFoundStore.load();
+    if (mounted && lf?.foundAt != _lastFound?.foundAt) {
+      setState(() => _lastFound = lf);
+    }
+  }
+
+  Future<void> _openLastFound() async {
+    final url = _lastFound?.bookingUrl;
+    if (url == null) return;
+    final uri = Uri.tryParse(url);
+    if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  /// Grant the alarm channel permission to ring through Do Not Disturb.
+  Future<void> _enableDndBypass() async {
+    if (!await NativeBridge.isDndAccessGranted()) {
+      _snack('Turn on "Health Link Helper" in the Do Not Disturb access list, '
+          'then return to the app.');
+      await NativeBridge.openDndAccessSettings();
+      return; // re-checked automatically on resume
+    }
+    final ok = await NativeBridge.applyAlarmBypass();
+    if (mounted) {
+      setState(() => _dndBypass = ok);
+      _snack(ok
+          ? 'The alarm will now ring even during Do Not Disturb.'
+          : 'Couldn\'t enable Do Not Disturb override.');
+    }
   }
 
   Future<void> _setup() async {
@@ -87,6 +129,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       _saved = await _prefs.load();
       if (_saved.months != null) _months = _saved.months!.clamp(1, 6);
       _alarmOnFound = _saved.alarmOnFound ?? false;
+      _lastFound = await _lastFoundStore.load();
+      _dndBypass = await NativeBridge.isDndAccessGranted();
       final mi = _saved.modalityIndex;
       if (mi != null && mi >= 0 && mi < Modality.values.length) {
         _modality = Modality.values[mi];
@@ -212,6 +256,21 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
         onProgress: (p) => setState(() => _progress = p),
       );
       setState(() => _results = results);
+      // Persist the soonest hit so the "last found" card survives restarts.
+      final hits = results.where((r) => r.hasAvailability).toList()
+        ..sort((a, b) => a.earliest!.compareTo(b.earliest!));
+      if (hits.isNotEmpty) {
+        final best = hits.first;
+        final lf = LastFound(
+          locationName: best.location.displayName,
+          city: best.location.city,
+          earliest: best.earliest!,
+          foundAt: DateTime.now(),
+          bookingUrl: EbbConfig.bookingUrl(_patient!.accountId).toString(),
+        );
+        await _lastFoundStore.save(lf);
+        if (mounted) setState(() => _lastFound = lf);
+      }
     } catch (e) {
       setState(() => _error = '$e');
     } finally {
@@ -254,9 +313,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openBooking(LocationAvailability r) async {
-    final url = Uri.parse(EbbConfig.appOrigin).replace(
-      pathSegments: [_patient!.accountId, 'booking', 'new-appointment'],
-    );
+    final url = EbbConfig.bookingUrl(_patient!.accountId);
     final earliest = r.earliest;
     final when = earliest == null ? '' : ' — try ${DateFormat.yMMMMd().format(earliest)}';
     if (mounted) {
@@ -307,7 +364,11 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     // Options form before a search; results afterwards.
     if (_results == null && !_scanning) {
       return SingleChildScrollView(
-        child: _Options(
+        child: Column(
+          children: [
+            if (_lastFound != null)
+              _LastFoundCard(found: _lastFound!, onOpen: _openLastFound),
+            _Options(
           patients: _patients,
           patient: _patient,
           onPatient: (p) async {
@@ -351,12 +412,16 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
           },
           onNearby: _selectNearby,
           onScan: _runScan,
+            ),
+          ],
         ),
       );
     }
 
     return Column(
       children: [
+        if (_lastFound != null)
+          _LastFoundCard(found: _lastFound!, onOpen: _openLastFound),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: Row(
@@ -395,6 +460,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
               _savePrefs();
             },
             onTest: _testAlert,
+            dndBypass: _dndBypass,
+            onEnableDnd: _enableDndBypass,
             onStart: _startMonitoring,
             onStop: _stopMonitoring,
           ),
@@ -411,6 +478,8 @@ class _MonitorBar extends StatelessWidget {
     required this.alarm,
     required this.onAlarm,
     required this.onTest,
+    required this.dndBypass,
+    required this.onEnableDnd,
     required this.onStart,
     required this.onStop,
   });
@@ -421,6 +490,8 @@ class _MonitorBar extends StatelessWidget {
   final bool alarm;
   final ValueChanged<bool> onAlarm;
   final VoidCallback onTest;
+  final bool dndBypass;
+  final VoidCallback onEnableDnd;
   final VoidCallback onStart;
   final VoidCallback onStop;
 
@@ -459,6 +530,34 @@ class _MonitorBar extends StatelessWidget {
                     // (channel settings, DND, volume) before relying on it.
                     secondary: TextButton(onPressed: onTest, child: const Text('Test')),
                   ),
+                  if (alarm)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8, bottom: 4),
+                      child: dndBypass
+                          ? Row(
+                              children: [
+                                Icon(Icons.check_circle,
+                                    size: 16, color: Theme.of(context).colorScheme.primary),
+                                const SizedBox(width: 6),
+                                const Expanded(
+                                  child: Text('Will ring through Do Not Disturb',
+                                      style: TextStyle(fontSize: 12)),
+                                ),
+                              ],
+                            )
+                          : Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                      'Silenced by Do Not Disturb unless you allow it.',
+                                      style: TextStyle(fontSize: 12)),
+                                ),
+                                TextButton(
+                                    onPressed: onEnableDnd,
+                                    child: const Text('Allow')),
+                              ],
+                            ),
+                    ),
                   const SizedBox(height: 4),
                   Row(
                     children: [
@@ -481,6 +580,62 @@ class _MonitorBar extends StatelessWidget {
                   ),
                 ],
               ),
+      ),
+    );
+  }
+}
+
+/// Persistent card showing the most recent appointment the app turned up,
+/// including which clinic and when it was found.
+class _LastFoundCard extends StatelessWidget {
+  const _LastFoundCard({required this.found, required this.onOpen});
+
+  final LastFound found;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final where =
+        (found.city != null && found.city!.trim().isNotEmpty) ? ', ${found.city!.trim()}' : '';
+    return Card(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      color: scheme.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.event_available, size: 18, color: scheme.onSecondaryContainer),
+                const SizedBox(width: 6),
+                Text('Last found appointment',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: scheme.onSecondaryContainer,
+                        )),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text('${found.locationName}$where',
+                style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 2),
+            Text(
+              'Soonest ${DateFormat.yMMMMEEEEd().format(found.earliest)} · '
+              'found ${DateFormat.MMMd().add_jm().format(found.foundAt)}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            if (found.bookingUrl != null)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: onOpen,
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('Open booking'),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -32,6 +32,13 @@ class EbbConfig {
   /// Web origin used to build the "open booking" hand-off URL.
   static const String appOrigin = 'https://thconnect.telushealth.com';
 
+  /// The TELUS Health Connect booking hand-off URL for an account. Opening it
+  /// with an external-application launch lets the installed TH Connect app take
+  /// over (via Android App Links) when present, otherwise the browser.
+  static Uri bookingUrl(String accountId) => Uri.parse(appOrigin).replace(
+        pathSegments: [accountId, 'booking', 'new-appointment'],
+      );
+
   /// Default UI language sent as the `x-language` header.
   static const String defaultLanguage = 'en';
 
